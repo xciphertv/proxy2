@@ -1,0 +1,1029 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Enhanced HLS Proxy Player</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/plyr@3.7.8/dist/plyr.css" rel="stylesheet">
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 1000px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #2a2a2a;
+            color: #e0e0e0;
+        }
+        .form-label, .form-check-label {
+            color: #e0e0e0;
+        }
+        #player-container {
+            margin-top: 20px;
+        }
+        .plyr {
+            width: 100%;
+            max-width: 800px;
+            margin: 0 auto;
+            --plyr-color-main: #23ade5;
+            --plyr-video-controls-background: rgba(0, 0, 0, 0.6);
+        }
+        .jw-player-container {
+            width: 100%;
+            max-width: 800px;
+            margin: 0 auto;
+            aspect-ratio: 16/9;
+        }
+        #log {
+            max-height: 300px;
+            overflow-y: auto;
+            margin-top: 20px;
+            border: 1px solid #444;
+            padding: 10px;
+            background-color: #333;
+            color: #e0e0e0;
+        }
+        .log-item {
+            margin-bottom: 5px;
+            word-break: break-all;
+        }
+        .log-error {
+            color: #ff6b6b;
+        }
+        .log-info {
+            color: #63c5da;
+        }
+        .log-warning {
+            color: #ffd166;
+        }
+        .spinner {
+            border: 4px solid rgba(0, 0, 0, 0.1);
+            border-left-color: #4CAF50;
+            border-radius: 50%;
+            width: 20px;
+            height: 20px;
+            animation: spin 1s linear infinite;
+            display: inline-block;
+            margin-right: 10px;
+            vertical-align: middle;
+            display: none;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Enhanced HLS Proxy Player</h1>
+        
+        <div class="row mb-3">
+            <div class="col-md-8">
+                <label for="proxyUrl" class="form-label">Proxy URL:</label>
+                <input type="text" id="proxyUrl" class="form-control" value="https://proxy.dn-cdn.workers.dev/fetch" 
+                    placeholder="https://proxy.dn-cdn.workers.dev/fetch">
+            </div>
+            <div class="col-md-4">
+                <div class="mt-4">
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" id="debugMode" checked>
+                        <label class="form-check-label" for="debugMode">
+                            Enable Debug Mode
+                        </label>
+                    </div>
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" id="useBlobUrls" checked>
+                        <label class="form-check-label" for="useBlobUrls">
+                            Use Blob URLs (recommended when using a web server)
+                        </label>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="row">
+            <div class="col-md-8">
+                <label for="m3u8Url" class="form-label">M3U8 URL:</label>
+                <input type="text" id="m3u8Url" class="form-control" 
+                    value="https://hls.krussdomi.com/manifest/67e8ab29169c31976b0a27a4/master.m3u8" 
+                    placeholder="https://example.com/playlist.m3u8">
+            </div>
+            <div class="col-md-4">
+                <label for="referer" class="form-label">Referer (optional):</label>
+                <input type="text" id="referer" class="form-control" 
+                    value="https://hls.krussdomi.com" 
+                    placeholder="https://example.com">
+            </div>
+        </div>
+        
+        <div class="row mt-3">
+            <div class="col">
+                <button id="playBtn" class="btn btn-primary">Play</button>
+                <button id="processBtn" class="btn btn-info ms-2">Process M3U8</button>
+                <button id="clearLogBtn" class="btn btn-secondary ms-2">Clear Log</button>
+                <button id="downloadBtn" class="btn btn-success ms-2" style="display: none;">Download M3U8</button>
+                <span class="spinner" id="spinner"></span>
+            </div>
+        </div>
+        
+        <div id="player-container" class="mt-4">
+            <div id="jwplayer-container"></div>
+        </div>
+        
+        <div id="log" class="mt-4"></div>
+    </div>
+
+    <!-- Required Libraries -->
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@1.6.0/dist/hls.min.js"></script>
+    <script src="https://content.jwplatform.com/libraries/KB5zFt7A.js"></script> <!-- JW Player library (free edition) -->
+    <style>
+        /* Additional styles for JW Player */
+        .jw-settings-menu {
+            background-color: rgba(0, 0, 0, 0.8) !important;
+        }
+        .jw-settings-topbar {
+            background-color: rgba(0, 0, 0, 0.9) !important;
+        }
+        .jw-settings-submenu {
+            background-color: rgba(0, 0, 0, 0.8) !important;
+        }
+        .jw-settings-content-item.jw-settings-item-active {
+            color: #23ade5 !important;
+        }
+        .jw-svg-icon-check {
+            fill: #23ade5 !important;
+        }
+        .jw-progress {
+            background-color: #23ade5 !important;
+        }
+        .jw-slider-horizontal .jw-knob {
+            background-color: #23ade5 !important;
+        }
+    </style>
+    
+    <script>
+        /**
+         * Enhanced HLS Proxy Player - Main Script
+         * 
+         * This script provides functionality to process M3U8 files through a proxy
+         * server, allowing playback of otherwise region-restricted or protected streams.
+         * It uses HLS.js for streaming and Plyr for the player interface.
+         */
+        
+        document.addEventListener('DOMContentLoaded', function() {
+            // Initialize global variables
+            let player = null;
+            let hls = null;
+            let processedM3u8 = null;
+            let blobUrls = [];
+            
+            // Disable blob URLs when running from file system
+            if (window.location.protocol === 'file:') {
+                const useBlobUrlsCheckbox = document.getElementById('useBlobUrls');
+                useBlobUrlsCheckbox.checked = false;
+                useBlobUrlsCheckbox.disabled = true;
+                
+                // Add warning message
+                log('Running from local file system - Blob URLs disabled to prevent security errors', 'warning');
+                const warningDiv = document.createElement('div');
+                warningDiv.className = 'alert alert-warning';
+                warningDiv.innerHTML = 'Running from local file system - some features may be limited. For best results, serve this page from a web server.';
+                document.querySelector('.container').insertBefore(warningDiv, document.querySelector('#player-container'));
+            }
+            
+            /**
+             * Logging function to display messages in the debug log
+             */
+            function log(message, type = 'info') {
+                if (document.getElementById('debugMode').checked) {
+                    const logContainer = document.getElementById('log');
+                    const logItem = document.createElement('div');
+                    logItem.className = `log-item log-${type}`;
+                    logItem.textContent = message;
+                    logContainer.appendChild(logItem);
+                    logContainer.scrollTop = logContainer.scrollHeight;
+                }
+            }
+            
+            /**
+             * Creates a proxied URL using the provided proxy server
+             */
+            function createProxiedUrl(originalUrl, proxyUrl, referer) {
+                const urlParams = new URLSearchParams();
+                urlParams.append('url', originalUrl);
+                if (referer) {
+                    urlParams.append('ref', referer);
+                }
+                return `${proxyUrl}?${urlParams.toString()}`;
+            }
+            
+            /**
+             * Resolves a relative URL to an absolute URL
+             */
+            function resolveUrl(relativeOrAbsoluteUrl, baseUrl) {
+                try {
+                    // Handle special cases
+                    if (relativeOrAbsoluteUrl.startsWith('data:')) {
+                        return relativeOrAbsoluteUrl;
+                    }
+                    
+                    // Special case for specific pattern
+                    if (/^[a-z0-9]+\/playlist\.m3u8$/.test(relativeOrAbsoluteUrl)) {
+                        const baseUrlObj = new URL(baseUrl);
+                        const id = relativeOrAbsoluteUrl.split('/')[0];
+                        log(`Special case ID/playlist.m3u8: ${relativeOrAbsoluteUrl} -> ${id}`, 'info');
+                        return `${baseUrlObj.origin}/manifest/${id}/${id}/playlist.m3u8`;
+                    }
+                    
+                    // Remove dot segments for URL resolution
+                    if (relativeOrAbsoluteUrl.startsWith('./')) {
+                        relativeOrAbsoluteUrl = relativeOrAbsoluteUrl.substring(2);
+                    }
+                    
+                    // Normal URL resolution
+                    return new URL(relativeOrAbsoluteUrl, baseUrl).href;
+                } catch (error) {
+                    log(`Error resolving URL: ${error}`, 'error');
+                    // Fallback
+                    if (baseUrl.endsWith('/')) {
+                        return baseUrl + relativeOrAbsoluteUrl;
+                    } else {
+                        return baseUrl.substring(0, baseUrl.lastIndexOf('/') + 1) + relativeOrAbsoluteUrl;
+                    }
+                }
+            }
+            
+            /**
+             * Clean up function for Blob URLs
+             */
+            function cleanupBlobUrls() {
+                if (blobUrls.length > 0) {
+                    log(`Cleaning up ${blobUrls.length} Blob URLs`, 'info');
+                    blobUrls.forEach(url => {
+                        try {
+                            URL.revokeObjectURL(url);
+                        } catch (e) {
+                            // Ignore errors
+                        }
+                    });
+                    blobUrls = [];
+                }
+            }
+            
+            /**
+             * Create a standalone version of the M3U8 for downloading
+             */
+            function createStandaloneM3u8(m3u8Content) {
+                // This just returns the processed content as is since it's already
+                // been fully processed with proxy URLs
+                return m3u8Content;
+            }
+            
+            /**
+             * Process M3U8 content by proxying all URLs
+             */
+            async function processM3u8Content(m3u8Content, baseUrl, proxyUrl, referer) {
+                const lines = m3u8Content.split('\n');
+                const processedLines = [];
+                
+                // Check if this is a master playlist
+                let isMasterPlaylist = false;
+                for (const line of lines) {
+                    if (line.includes('#EXT-X-STREAM-INF')) {
+                        isMasterPlaylist = true;
+                        break;
+                    }
+                }
+                
+                log(`Processing ${isMasterPlaylist ? 'master' : 'media'} playlist from ${baseUrl}`, 'info');
+                
+                // Process line by line
+                for (let i = 0; i < lines.length; i++) {
+                    const line = lines[i];
+                    
+                    // Handle URI attributes in directives
+                    if (line.includes('URI="')) {
+                        const uriMatch = line.match(/URI="([^"]+)"/);
+                        if (uriMatch && uriMatch[1]) {
+                            const originalUri = uriMatch[1];
+                            const absoluteUri = resolveUrl(originalUri, baseUrl);
+                            log(`Found URI attribute: ${originalUri} -> ${absoluteUri}`, 'info');
+                            
+                            if (line.startsWith('#EXT-X-MEDIA')) {
+                                // This is a media playlist reference (usually audio)
+                                try {
+                                    const mediaPlaylistUrl = createProxiedUrl(absoluteUri, proxyUrl, referer);
+                                    const mediaResponse = await fetch(mediaPlaylistUrl);
+                                    if (!mediaResponse.ok) {
+                                        throw new Error(`Failed to fetch media playlist: ${mediaResponse.status}`);
+                                    }
+                                    
+                                    const mediaContent = await mediaResponse.text();
+                                    const processedMediaContent = await processM3u8Content(mediaContent, absoluteUri, proxyUrl, referer);
+                                    
+                                    // Create a data URL for this media playlist
+                                    const mediaDataUrl = `data:application/x-mpegURL;charset=utf-8,${encodeURIComponent(processedMediaContent)}`;
+                                    
+                                    // Replace the URI in the original line
+                                    const newLine = line.replace(uriMatch[0], `URI="${mediaDataUrl}"`);
+                                    processedLines.push(newLine);
+                                } catch (error) {
+                                    log(`Error processing media playlist: ${error.message}`, 'error');
+                                    // Fallback to simple proxying if recursive processing fails
+                                    const proxiedUri = createProxiedUrl(absoluteUri, proxyUrl, referer);
+                                    const newLine = line.replace(uriMatch[0], `URI="${proxiedUri}"`);
+                                    processedLines.push(newLine);
+                                }
+                            } else {
+                                // This is probably an initialization segment or other URI
+                                const proxiedUri = createProxiedUrl(absoluteUri, proxyUrl, referer);
+                                processedLines.push(line.replace(uriMatch[0], `URI="${proxiedUri}"`));
+                            }
+                            continue;
+                        }
+                    }
+                    
+                    // Handle stream info directives and comments
+                    if (line.startsWith('#') || line.trim() === '') {
+                        processedLines.push(line);
+                        continue;
+                    }
+                    
+                    // Handle content URIs
+                    if (isMasterPlaylist) {
+                        // This is a playlist URI in the master playlist
+                        try {
+                            // Resolve the absolute URI
+                            const absoluteUri = resolveUrl(line, baseUrl);
+                            log(`Found variant URI: ${absoluteUri}`, 'info');
+                            
+                            // Fetch and process this variant playlist
+                            const variantPlaylistUrl = createProxiedUrl(absoluteUri, proxyUrl, referer);
+                            const variantResponse = await fetch(variantPlaylistUrl);
+                            if (!variantResponse.ok) {
+                                throw new Error(`Failed to fetch variant playlist: ${variantResponse.status}`);
+                            }
+                            
+                            const variantContent = await variantResponse.text();
+                            const processedVariantContent = await processM3u8Content(variantContent, absoluteUri, proxyUrl, referer);
+                            
+                            // Create a data URL for this variant playlist
+                            const variantDataUrl = `data:application/x-mpegURL;charset=utf-8,${encodeURIComponent(processedVariantContent)}`;
+                            processedLines.push(variantDataUrl);
+                            
+                        } catch (error) {
+                            log(`Error processing variant playlist: ${error.message}`, 'error');
+                            // Create a direct proxy URL as fallback
+                            const absoluteUri = resolveUrl(line, baseUrl);
+                            const fallbackUrl = createProxiedUrl(absoluteUri, proxyUrl, referer);
+                            processedLines.push(fallbackUrl);
+                        }
+                    } else {
+                        // This is a segment URI in a media playlist
+                        try {
+                            // Handle protocol-relative URLs
+                            let segmentUri = line;
+                            if (line.startsWith('//')) {
+                                segmentUri = `https:${line}`;
+                            }
+                            
+                            const absoluteUri = resolveUrl(segmentUri, baseUrl);
+                            const proxiedUri = createProxiedUrl(absoluteUri, proxyUrl, referer);
+                            processedLines.push(proxiedUri);
+                        } catch (error) {
+                            log(`Error processing segment URI: ${error.message}. Using original.`, 'error');
+                            processedLines.push(line);
+                        }
+                    }
+                }
+                
+                return processedLines.join('\n');
+            }
+            
+            /**
+             * Function to download the processed M3U8 as a file
+             */
+            function downloadProcessedM3u8() {
+                if (!processedM3u8) {
+                    log('No processed M3U8 content available. Please process an M3U8 first.', 'error');
+                    return;
+                }
+                
+                // Create a standalone version of the M3U8 content
+                const standaloneContent = createStandaloneM3u8(processedM3u8);
+                
+                // Create a blob with the processed content
+                const blob = new Blob([standaloneContent], { type: 'application/x-mpegURL' });
+                
+                // Create a URL for the blob
+                const url = URL.createObjectURL(blob);
+                blobUrls.push(url);
+                
+                // Get a filename based on the original URL
+                const m3u8Url = document.getElementById('m3u8Url').value.trim();
+                let filename = 'processed.m3u8';
+                
+                try {
+                    // Try to extract a meaningful filename from the original URL
+                    const urlObj = new URL(m3u8Url);
+                    const pathParts = urlObj.pathname.split('/');
+                    const originalFilename = pathParts[pathParts.length - 1];
+                    
+                    if (originalFilename && originalFilename.includes('.m3u8')) {
+                        // Use the original filename with 'processed-' prefix
+                        filename = 'processed-' + originalFilename;
+                    } else {
+                        // Use a combination of path parts for more context
+                        const lastPathPart = pathParts.filter(part => part.length > 0).pop();
+                        if (lastPathPart) {
+                            filename = 'processed-' + lastPathPart + '.m3u8';
+                        }
+                    }
+                } catch (e) {
+                    // If parsing URL fails, use the default filename
+                    log(`Using default filename: ${filename}`, 'info');
+                }
+                
+                // Create a temporary anchor element to trigger the download
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = filename;
+                document.body.appendChild(a);
+                a.click();
+                
+                // Clean up
+                setTimeout(() => {
+                    document.body.removeChild(a);
+                    URL.revokeObjectURL(url);
+                    blobUrls = blobUrls.filter(item => item !== url);
+                }, 100);
+                
+                log(`Downloaded file: ${filename}`, 'info');
+            }
+            
+            /**
+             * Initialize JW Player with the processed M3U8
+             */
+            function initPlayer(m3u8Content) {
+                // Clean up existing instances
+                cleanupPlayer();
+                
+                // Create a URL from the processed M3U8 content
+                let contentUrl;
+                
+                // Check if we can use Blob URLs
+                if (document.getElementById('useBlobUrls').checked && window.location.protocol !== 'file:') {
+                    // Use Blob URL
+                    const blob = new Blob([m3u8Content], { type: 'application/x-mpegURL' });
+                    contentUrl = URL.createObjectURL(blob);
+                    blobUrls.push(contentUrl);
+                    log(`Created Blob URL for player: ${contentUrl}`, 'info');
+                } else {
+                    // Use data URL (safer for file:// protocol)
+                    contentUrl = `data:application/x-mpegURL;charset=utf-8,${encodeURIComponent(m3u8Content)}`;
+                    log(`Created data URL for player`, 'info');
+                }
+                
+                // Get the container
+                const playerContainer = document.getElementById('jwplayer-container');
+                
+                // Get debug status
+                const debug = document.getElementById('debugMode').checked;
+                
+                // Initialize JW Player
+                try {
+                    log('Initializing JW Player...', 'info');
+                    
+                    // Create JW Player instance
+                    player = jwplayer(playerContainer).setup({
+                        file: contentUrl,
+                        type: 'hls',
+                        hlsjsConfig: {
+                            debug: debug,
+                            fragLoadingMaxRetry: 30,
+                            manifestLoadingMaxRetry: 30,
+                            levelLoadingMaxRetry: 30
+                        },
+                        width: '100%',
+                        aspectratio: '16:9',
+                        primary: 'html5',
+                        preload: 'auto',
+                        autostart: true,
+                        controls: true,
+                        displaytitle: true,
+                        displaydescription: false,
+                        stretching: 'uniform',
+                        skin: {
+                            name: 'seven'
+                        },
+                        cast: {}
+                    });
+                    
+                    // Add event listeners
+                    player.on('ready', function() {
+                        log('JW Player is ready', 'info');
+                    });
+                    
+                    player.on('error', function(e) {
+                        log(`JW Player error: ${e.message}`, 'error');
+                    });
+                    
+                    player.on('levels', function(e) {
+                        const qualities = e.levels;
+                        if (qualities && qualities.length > 1) {
+                            log(`JW Player detected ${qualities.length} quality levels`, 'info');
+                            
+                            // Log quality details
+                            qualities.forEach((quality, index) => {
+                                log(`Quality ${index}: ${quality.label || quality.height + 'p'}`, 'info');
+                            });
+                        }
+                    });
+                    
+                    player.on('audioTracks', function(e) {
+                        const audioTracks = e.tracks;
+                        if (audioTracks && audioTracks.length > 1) {
+                            log(`JW Player detected ${audioTracks.length} audio tracks`, 'info');
+                            
+                            // Log audio track details
+                            audioTracks.forEach((track, index) => {
+                                log(`Audio ${index}: ${track.name || track.language || 'Track ' + (index + 1)}`, 'info');
+                            });
+                        }
+                    });
+                    
+                    player.on('levelsChanged', function(e) {
+                        const currentQuality = e.currentQuality;
+                        const levels = player.getQualityLevels();
+                        
+                        if (levels && levels.length > 0) {
+                            const quality = levels[currentQuality];
+                            log(`Quality changed to: ${quality.label || quality.height + 'p'}`, 'info');
+                        }
+                    });
+                    
+                    player.on('audioTrackChanged', function(e) {
+                        const currentTrack = e.currentTrack;
+                        const tracks = player.getAudioTracks();
+                        
+                        if (tracks && tracks.length > 0) {
+                            const track = tracks[currentTrack];
+                            log(`Audio track changed to: ${track.name || track.language || 'Track ' + (currentTrack + 1)}`, 'info');
+                        }
+                    });
+                    
+                } catch (error) {
+                    log(`Error initializing JW Player: ${error.message}`, 'error');
+                    playerContainer.innerHTML = `<div class="alert alert-danger">Error initializing player: ${error.message}</div>`;
+                }
+            }
+            
+            /**
+             * Setup quality selection in Plyr
+             */
+            function setupQualitySettings(player, hls, levels) {
+                // Extract quality levels from HLS data
+                const qualityOptions = levels
+                    .filter(level => level.height)
+                    .map(level => ({
+                        label: `${level.height}p`,
+                        value: levels.indexOf(level)
+                    }));
+                
+                // Sort by resolution (highest first)
+                qualityOptions.sort((a, b) => {
+                    const resA = parseInt(a.label);
+                    const resB = parseInt(b.label);
+                    return resB - resA;
+                });
+                
+                // Add "Auto" option at the top
+                qualityOptions.unshift({ label: 'Auto', value: -1 });
+                
+                log(`Quality options: ${qualityOptions.map(opt => opt.label).join(', ')}`, 'info');
+                
+                // Build a custom quality menu
+                const settingsButton = player.elements.settings.buttons.quality;
+                
+                // Only create the menu if it doesn't exist
+                if (!settingsButton) {
+                    // Get the settings menu and pane
+                    const menu = player.elements.settings.menu;
+                    
+                    // Create a custom menu item
+                    const qualityMenu = createElement('div', {
+                        class: 'plyr__menu__container',
+                        hidden: true
+                    });
+                    
+                    // Create the quality submenu
+                    const qualitySubmenu = createElement('div');
+                    qualityMenu.appendChild(qualitySubmenu);
+                    
+                    // Back button
+                    const backButton = createElement('button', {
+                        type: 'button',
+                        'data-plyr': 'back'
+                    });
+                    backButton.innerHTML = 'Quality';
+                    backButton.addEventListener('click', () => {
+                        player.elements.settings.panels.home.hidden = false;
+                        qualityMenu.hidden = true;
+                    });
+                    qualitySubmenu.appendChild(backButton);
+                    
+                    // Create options list
+                    const list = createElement('ul');
+                    qualitySubmenu.appendChild(list);
+                    
+                    // Add options to the list
+                    qualityOptions.forEach(option => {
+                        const item = createElement('li');
+                        
+                        const button = createElement('button', {
+                            type: 'button',
+                            class: 'plyr__control plyr__control--forward',
+                            'data-plyr': 'quality',
+                            'data-plyr-quality-value': option.value,
+                        });
+                        
+                        button.innerHTML = option.label;
+                        
+                        // Check mark for current quality
+                        if (option.value === hls.currentLevel) {
+                            button.classList.add('plyr__control--checked');
+                        }
+                        
+                        // Add click handler
+                        button.addEventListener('click', () => {
+                            hls.currentLevel = option.value;
+                            log(`Quality changed to ${option.label}`, 'info');
+                            
+                            // Update check marks
+                            list.querySelectorAll('button').forEach(btn => {
+                                btn.classList.remove('plyr__control--checked');
+                            });
+                            button.classList.add('plyr__control--checked');
+                            
+                            // Close menu
+                            player.elements.settings.popup.hidden = true;
+                        });
+                        
+                        item.appendChild(button);
+                        list.appendChild(item);
+                    });
+                    
+                    // Add to DOM
+                    menu.appendChild(qualityMenu);
+                    
+                    // Create button for main settings menu
+                    const qualityMainButton = createElement('button', {
+                        type: 'button',
+                        class: 'plyr__control plyr__control--forward',
+                        'data-plyr': 'quality-menu'
+                    });
+                    qualityMainButton.innerHTML = 'Quality';
+                    qualityMainButton.addEventListener('click', () => {
+                        player.elements.settings.panels.home.hidden = true;
+                        qualityMenu.hidden = false;
+                    });
+                    
+                    // Add to the main menu
+                    player.elements.settings.panels.home.appendChild(qualityMainButton);
+                }
+                
+                // Listen for quality changes from HLS.js
+                hls.on(Hls.Events.LEVEL_SWITCHED, (event, data) => {
+                    const level = hls.levels[data.level];
+                    if (level) {
+                        log(`HLS switched to quality: ${level.height}p`, 'info');
+                    }
+                });
+            }
+            
+            /**
+             * Setup audio track selection in Plyr
+             */
+            function setupAudioSettings(player, hls, audioTracks) {
+                // Create audio track options
+                const audioOptions = audioTracks.map((track, index) => {
+                    const name = track.name || track.lang || `Track ${index + 1}${track.default ? ' (Default)' : ''}`;
+                    return { label: name, value: index };
+                });
+                
+                log(`Audio options: ${audioOptions.map(opt => opt.label).join(', ')}`, 'info');
+                
+                // Only add the menu if it doesn't exist
+                if (!document.getElementById('plyr-settings-panel-audio')) {
+                    // Create panel ID - must follow Plyr's convention
+                    const panelId = 'plyr-settings-panel-audio';
+                    
+                    // Create the panel
+                    const panel = createElement('div', {
+                        id: panelId,
+                        class: 'plyr__menu__container',
+                        hidden: ''
+                    });
+                    
+                    // Create panel header with back button
+                    const backButton = createElement('button', {
+                        type: 'button',
+                        class: 'plyr__control plyr__control--back',
+                        'data-plyr': 'back'
+                    });
+                    backButton.textContent = 'Audio Track';
+                    panel.appendChild(backButton);
+                    
+                    // Create item list
+                    const list = createElement('ul', {
+                        role: 'menu'
+                    });
+                    
+                    // Create items
+                    audioOptions.forEach(option => {
+                        const item = createElement('li', {
+                            role: 'menuitemradio'
+                        });
+                        
+                        const button = createElement('button', {
+                            class: 'plyr__control plyr__control--audio',
+                            role: 'menuitemradio', 
+                            type: 'button',
+                            'aria-checked': option.value === hls.audioTrack ? 'true' : 'false'
+                        });
+                        
+                        // Label
+                        const label = createElement('span', { class: 'plyr__menu__value' });
+                        label.textContent = option.label;
+                        button.appendChild(label);
+                        
+                        // Add click handler
+                        button.addEventListener('click', () => {
+                            // Set audio track
+                            hls.audioTrack = option.value;
+                            log(`Audio track changed to ${option.label}`, 'info');
+                            
+                            // Update checked status
+                            list.querySelectorAll('[role="menuitemradio"]').forEach(menuItem => {
+                                menuItem.querySelector('button').setAttribute('aria-checked', 'false');
+                            });
+                            button.setAttribute('aria-checked', 'true');
+                            
+                            // Update button text in main menu
+                            document.querySelector('#plyr-settings-home button[data-plyr="audio"] .plyr__menu__value').textContent = option.label;
+                            
+                            // Return to home menu
+                            player.elements.settings.showPanel('home');
+                        });
+                        
+                        item.appendChild(button);
+                        list.appendChild(item);
+                    });
+                    
+                    panel.appendChild(list);
+                    
+                    // Add the panel to the settings menu
+                    player.elements.settings.menu.appendChild(panel);
+                    
+                    // Register panel with Plyr
+                    player.elements.settings.panels.audio = panel;
+                    
+                    // Add button to home panel
+                    const home = player.elements.settings.panels.home;
+                    
+                    // Create the menu button
+                    const menuItem = createElement('button', {
+                        class: 'plyr__control plyr__control--forward',
+                        role: 'menuitem',
+                        type: 'button',
+                        'data-plyr': 'audio',
+                        id: 'plyr-settings-home-audio'
+                    });
+                    
+                    // Button label
+                    const menuLabel = createElement('span', { class: 'plyr__menu__label' });
+                    menuLabel.textContent = 'Audio Track';
+                    menuItem.appendChild(menuLabel);
+                    
+                    // Button value (current selection)
+                    const menuValue = createElement('span', { class: 'plyr__menu__value' });
+                    const currentTrack = audioOptions.find(opt => opt.value === hls.audioTrack) || audioOptions[0];
+                    menuValue.textContent = currentTrack.label;
+                    menuItem.appendChild(menuValue);
+                    
+                    // Add to menu
+                    home.appendChild(menuItem);
+                    
+                    // Update the audio track menu when track changes
+                    hls.on(Hls.Events.AUDIO_TRACK_SWITCHED, (event, data) => {
+                        const track = hls.audioTracks[data.id];
+                        if (track) {
+                            const name = track.name || track.lang || `Track ${data.id + 1}`;
+                            log(`HLS switched to audio track: ${name}`, 'info');
+                            
+                            // Update menu value
+                            menuValue.textContent = name;
+                            
+                            // Update checked status
+                            list.querySelectorAll('[role="menuitemradio"]').forEach((item, index) => {
+                                const button = item.querySelector('button');
+                                button.setAttribute('aria-checked', index === data.id ? 'true' : 'false');
+                            });
+                        }
+                    });
+                }
+            }
+            
+            /**
+             * Helper function to create a DOM element with attributes
+             */
+            function createElement(tag, attributes = {}) {
+                const element = document.createElement(tag);
+                
+                Object.entries(attributes).forEach(([key, value]) => {
+                    if (value === true) {
+                        element.setAttribute(key, '');
+                    } else if (value !== false && value !== null && value !== undefined) {
+                        element.setAttribute(key, value);
+                    }
+                });
+                
+                return element;
+            }
+            
+            /**
+             * Clean up player resources
+             */
+            function cleanupPlayer() {
+                if (player) {
+                    try {
+                        player.remove();
+                    } catch (e) {
+                        log(`Error cleaning up player: ${e.message}`, 'warning');
+                    }
+                    player = null;
+                }
+                
+                if (hls) {
+                    try {
+                        hls.destroy();
+                    } catch (e) {
+                        log(`Error cleaning up HLS.js: ${e.message}`, 'warning');
+                    }
+                    hls = null;
+                }
+            }
+            
+            /**
+             * Main function to process M3U8 without playing
+             */
+            async function processM3u8Only() {
+                const spinner = document.getElementById('spinner');
+                spinner.style.display = 'inline-block';
+                
+                try {
+                    log(`Processing M3U8...`, 'info');
+                    
+                    const m3u8Url = document.getElementById('m3u8Url').value.trim();
+                    const proxyUrl = document.getElementById('proxyUrl').value.trim();
+                    const referer = document.getElementById('referer').value.trim();
+                    
+                    if (!m3u8Url || !proxyUrl) {
+                        throw new Error(`Please enter both M3U8 URL and Proxy URL`);
+                    }
+                    
+                    // Create proxied URL for initial fetch
+                    const proxiedMasterUrl = createProxiedUrl(m3u8Url, proxyUrl, referer);
+                    log(`Fetching master playlist: ${proxiedMasterUrl}`, 'info');
+                    
+                    // Extract base URL for processing
+                    const baseUrl = m3u8Url.substring(0, m3u8Url.lastIndexOf('/') + 1);
+                    log(`Base URL for processing: ${baseUrl}`, 'info');
+                    
+                    // Fetch the master M3U8 file
+                    const response = await fetch(proxiedMasterUrl);
+                    
+                    if (!response.ok) {
+                        throw new Error(`Failed to fetch master M3U8: ${response.status} ${response.statusText}`);
+                    }
+                    
+                    const masterContent = await response.text();
+                    log('Master playlist fetched successfully', 'info');
+                    
+                    // Process the master M3U8 content
+                    const result = await processM3u8Content(masterContent, m3u8Url, proxyUrl, referer);
+                    log('Processing complete!', 'info');
+                    
+                    // Store processed content
+                    processedM3u8 = result;
+                    
+                    // Display information about the processed M3U8
+                    log(`--- Processed M3U8 Information ---`, 'info');
+                    log(`Processed content size: ${result.length} bytes`, 'info');
+                    
+                    // Count proxied segments
+                    const segmentCount = (result.match(/https:\/\/proxy/g) || []).length;
+                    log(`Proxied segments/playlists: ${segmentCount}`, 'info');
+                    
+                    // Detect if it's a master playlist
+                    const isMaster = result.includes('#EXT-X-STREAM-INF');
+                    log(`Playlist type: ${isMaster ? 'Master Playlist' : 'Media Playlist'}`, 'info');
+                    
+                    log(`To play this processed M3U8, click the Play button`, 'info');
+                    
+                    // Show the download button
+                    document.getElementById('downloadBtn').style.display = 'inline-block';
+                    
+                } catch (error) {
+                    log(`Error: ${error.message}`, 'error');
+                } finally {
+                    spinner.style.display = 'none';
+                }
+            }
+            
+            /**
+             * Main function to process and play M3U8
+             */
+            async function processAndPlayM3u8() {
+                const spinner = document.getElementById('spinner');
+                spinner.style.display = 'inline-block';
+                
+                try {
+                    // Clean up resources
+                    cleanupPlayer();
+                    cleanupBlobUrls();
+                    
+                    log(`Starting playback...`, 'info');
+                    
+                    // If we already have processed content, use it
+                    if (processedM3u8) {
+                        log(`Using previously processed M3U8 content`, 'info');
+                        initPlayer(processedM3u8);
+                        return;
+                    }
+                    
+                    // Process the M3U8 file
+                    const m3u8Url = document.getElementById('m3u8Url').value.trim();
+                    const proxyUrl = document.getElementById('proxyUrl').value.trim();
+                    const referer = document.getElementById('referer').value.trim();
+                    
+                    if (!m3u8Url || !proxyUrl) {
+                        throw new Error(`Please enter both M3U8 URL and Proxy URL`);
+                    }
+                    
+                    // Create proxied URL for initial fetch
+                    const proxiedMasterUrl = createProxiedUrl(m3u8Url, proxyUrl, referer);
+                    log(`Fetching master playlist: ${proxiedMasterUrl}`, 'info');
+                    
+                    // Fetch the master M3U8 file
+                    const response = await fetch(proxiedMasterUrl);
+                    
+                    if (!response.ok) {
+                        throw new Error(`Failed to fetch master M3U8: ${response.status} ${response.statusText}`);
+                    }
+                    
+                    const masterContent = await response.text();
+                    log('Master playlist fetched successfully', 'info');
+                    
+                    // Process the master M3U8 content
+                    const result = await processM3u8Content(masterContent, m3u8Url, proxyUrl, referer);
+                    log('Processing complete, initializing player', 'info');
+                    
+                    // Store processed content
+                    processedM3u8 = result;
+                    
+                    // Show the download button
+                    document.getElementById('downloadBtn').style.display = 'inline-block';
+                    
+                    // Initialize the player
+                    initPlayer(result);
+                    
+                } catch (error) {
+                    log(`Error: ${error.message}`, 'error');
+                    const playerContainer = document.getElementById('player-container');
+                    playerContainer.innerHTML = `<div class="alert alert-danger">Error: ${error.message}</div>`;
+                } finally {
+                    spinner.style.display = 'none';
+                }
+            }
+            
+            // Set up event listeners
+            document.getElementById('playBtn').addEventListener('click', processAndPlayM3u8);
+            document.getElementById('processBtn').addEventListener('click', processM3u8Only);
+            document.getElementById('clearLogBtn').addEventListener('click', function() {
+                document.getElementById('log').innerHTML = '';
+            });
+            document.getElementById('downloadBtn').addEventListener('click', downloadProcessedM3u8);
+            
+            // Clean up resources when leaving the page
+            window.addEventListener('beforeunload', function() {
+                cleanupBlobUrls();
+                cleanupPlayer();
+            });
+            
+            log('Enhanced HLS Proxy Player initialized successfully', 'info');
+        });
+    </script>
+</body>
+</html>
